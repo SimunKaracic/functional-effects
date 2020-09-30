@@ -1,11 +1,11 @@
-val ZIOVersion = "1.0.0-RC20"
+val ZIOVersion = "1.0.1"
 
 lazy val root = project
   .in(file("."))
   .settings(
     name := "zio-intro-game",
     organization := "net.degoes",
-    scalaVersion := "2.12.8",
+    scalaVersion := "2.12.11",
     initialCommands in Compile in console :=
       """|import zio._
          |import zio.console._
