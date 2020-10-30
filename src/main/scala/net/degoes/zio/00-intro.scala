@@ -40,17 +40,21 @@ object ZIOModel {
    * Implement all missing methods on the ZIO companion object.
    */
   object ZIO {
-    def succeed[A](a: => A): ZIO[Any, Nothing, A] = ???
+    def succeed[A](a: => A): ZIO[Any, Nothing, A] = ZIO(_ => Right(a))
 
-    def fail[E](e: => E): ZIO[Any, E, Nothing] = ???
+    def fail[E](e: => E): ZIO[Any, E, Nothing] = ZIO(_ => Left(e))
 
-    def effect[A](sideEffect: => A): ZIO[Any, Throwable, A] = ???
+    def effect[A](sideEffect: => A): ZIO[Any, Throwable, A] = ZIO(_ => try {
+      Right(sideEffect)
+    } catch {
+      case e => Left(e)
+    })
 
-    def environment[R]: ZIO[R, Nothing, R] = ???
+    def environment[R]: ZIO[R, Nothing, R] = ZIO(r => Right(r))
 
-    def access[R, A](f: R => A): ZIO[R, Nothing, A] = ???
+    def access[R, A](f: R => A): ZIO[R, Nothing, A] = ZIO(r => Right(f(r)))
 
-    def accessM[R, E, A](f: R => ZIO[R, E, A]): ZIO[R, E, A] = ???
+    def accessM[R, E, A](f: R => ZIO[R, E, A]): ZIO[R, E, A] = ZIO(r => f(r).run(r))
   }
 
   /**
@@ -58,18 +62,19 @@ object ZIOModel {
    *
    * Implement all missing methods on the ZIO class.
    */
-  final case class ZIO[-R, +E, +A](run: R => Either[E, A]) { self =>
-    def map[B](f: A => B): ZIO[R, E, B] = ???
+  final case class ZIO[-R, +E, +A](run: R => Either[E, A]) {
+    self =>
+    def map[B](f: A => B): ZIO[R, E, B] = ZIO(r => run(r).map(f))
 
     def flatMap[R1 <: R, E1 >: E, B](f: A => ZIO[R1, E1, B]): ZIO[R1, E1, B] =
-      ???
+      ZIO(r => self.run(r).flatMap(a => f(a).run(r)))
 
     def zip[R1 <: R, E1 >: E, B](that: ZIO[R1, E1, B]): ZIO[R1, E1, (A, B)] =
-      ???
+      self.flatMap(a => that.map(b => (a, b)))
 
-    def either: ZIO[R, Nothing, Either[E, A]] = ???
+    def either: ZIO[R, Nothing, Either[E, A]] = ZIO(r => Right(self.run(r)))
 
-    def provide(r: R): ZIO[Any, E, A] = ???
+    def provide(r: R): ZIO[Any, E, A] = ZIO(_ => self.run(r))
 
     def orDie(implicit ev: E <:< Throwable): ZIO[R, Nothing, A] =
       ZIO(r => self.run(r).fold(throw _, Right(_)))
@@ -104,14 +109,15 @@ object ZIOTypes {
    *
    * Provide definitions for the ZIO type aliases below.
    */
-  type Task[+A]     = ???
-  type UIO[+A]      = ???
-  type RIO[-R, +A]  = ???
-  type IO[+E, +A]   = ???
-  type URIO[-R, +A] = ???
+  type Task[+A] = ZIO[Any, Throwable, A]
+  type UIO[+A] = ZIO[Any, Nothing, A]
+  type RIO[-R, +A] = ZIO[R, Throwable, A]
+  type IO[+E, +A] = ZIO[Any, E, A]
+  type URIO[-R, +A] = ZIO[R, Nothing, A]
 }
 
 object SuccessEffect extends App {
+
   import zio.console._
 
   /**
@@ -121,10 +127,11 @@ object SuccessEffect extends App {
    * `ExitCode`.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    ZIO.succeed(ExitCode.success)
 }
 
 object HelloWorld extends App {
+
   import zio.console._
 
   /**
@@ -135,10 +142,13 @@ object HelloWorld extends App {
    * effect into another one that produces an exit code.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    for {
+      _ <- putStrLn("Hello world")
+    } yield ExitCode.success
 }
 
 object SimpleMap extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -151,10 +161,11 @@ object SimpleMap extends App {
    * into a constant exit code by using `ZIO#as`.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    readLine.map(_.length).as(ExitCode.success)
 }
 
 object PrintSequenceZip extends App {
+
   import zio.console._
 
   /**
@@ -164,11 +175,14 @@ object PrintSequenceZip extends App {
    * that prints three lines of text to the console.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    putStrLn("What").zip(putStrLn("The")).zip(putStrLn("fuck")) *> ZIO.succeed(ExitCode.success)
 }
 
 object PrintSequence extends App {
+
   import zio.console._
+
+  val x = putStrLn("what")
 
   /**
    * EXERCISE
@@ -177,10 +191,11 @@ object PrintSequence extends App {
    * produce an effect that prints three lines of text to the console.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    x *> x *> x *> ZIO.succeed(ExitCode.success)
 }
 
 object PrintReadSequence extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -193,10 +208,11 @@ object PrintReadSequence extends App {
    * effect, which models reading a line of text from the console.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    putStrLn("Hit enter to exit") *> readLine *> ZIO.succeed(ExitCode.success)
 }
 
 object SimpleDuplication extends App {
+
   import zio.console._
 
   /**
@@ -207,16 +223,18 @@ object SimpleDuplication extends App {
    * value that stores the expression, and then referencing that variable
    * three times.
    */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    // val effect = ???
+  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = {
+    val effect = putStrLn("Hello again")
     putStrLn("Hello") *>
-      putStrLn("Hello again") *>
-      putStrLn("Hello again") *>
-      putStrLn("Hello again") *>
+      effect *>
+      effect *>
+      effect *>
       ZIO.succeed(ExitCode.success)
+  }
 }
 
 object FlatMap extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -236,12 +254,12 @@ object FlatMap extends App {
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
     putStrLn("What is your name?") *>
-      readLine *> // Use .flatMap(...) here
-      putStrLn("Your name is: ") *>
+      readLine.flatMap { name => putStrLn(name) } *>
       ZIO.succeed(ExitCode.success)
 }
 
 object PromptName extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -267,13 +285,14 @@ object PromptName extends App {
    * on the right-hand side.
    */
   def myZipRight[R, E, A, B](
-    left: ZIO[R, E, A],
-    right: ZIO[R, E, B]
-  ): ZIO[R, E, B] =
-    ???
+                              left: ZIO[R, E, A],
+                              right: ZIO[R, E, B]
+                            ): ZIO[R, E, B] =
+    left.flatMap(_ => right)
 }
 
 object ForComprehension extends App {
+
   import zio.console._
 
   val readLine = getStrLn.orDie
@@ -285,13 +304,15 @@ object ForComprehension extends App {
    * the for comprehension will be translated by Scala into a `flatMap`,
    * except for the final line, which will be translated into a `map`.
    */
-  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    putStrLn("What is your name?").flatMap(
-      _ => readLine.flatMap(name => putStrLn(s"Your name is: ${name}").map(_ => ExitCode.success))
-    )
+  def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] = for {
+    _ <- putStrLn("WHAT THE FUUUUCK")
+    name <- readLine
+    _ <- putStrLn(s"Your name is: ${name}")
+  } yield ExitCode.success
 }
 
 object ForComprehensionBackward extends App {
+
   import zio.console._
 
   val readInt = getStrLn.flatMap(string => ZIO(string.toInt)).orDie
@@ -305,15 +326,15 @@ object ForComprehensionBackward extends App {
    * which will translate to a `map`.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    for {
-      _   <- putStrLn("How old are you?")
-      age <- readInt
-      _ <- if (age < 18) putStrLn("You are a kid!")
-          else putStrLn("You are all grown up!")
-    } yield ExitCode.success
+  putStrLn("How old are you?")
+    .flatMap(_ => readInt
+      .flatMap(age =>
+          if (age < 18) putStrLn("You are a kid") else putStrLn("You're an adult"))
+      .map(_ => ExitCode.success))
 }
 
 object NumberGuesser extends App {
+
   import zio.console._
   import zio.random._
 
@@ -331,7 +352,11 @@ object NumberGuesser extends App {
    * above.
    */
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
-    ???
+    (for {
+      target <- nextIntBetween(0,2)
+      guess <- putStrLn("Guess the number!") *> getStrLn
+      _     <- analyzeAnswer(target, guess)
+    } yield ExitCode.success) orElse ZIO.succeed(ExitCode.failure)
 }
 
 object SingleSideEffect extends App {
@@ -367,8 +392,8 @@ object MultipleSideEffects extends App {
 
   def run(args: List[String]): ZIO[ZEnv, Nothing, ExitCode] =
     (for {
-      _    <- putStrLn("Hello, what is your name?")
+      _ <- putStrLn("Hello, what is your name?")
       name <- getStrLn
-      _    <- putStrLn(s"Good to meet you, ${name}!")
+      _ <- putStrLn(s"Good to meet you, ${name}!")
     } yield ()).exitCode
 }
